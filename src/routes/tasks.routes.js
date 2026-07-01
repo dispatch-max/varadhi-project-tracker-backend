@@ -1,0 +1,13 @@
+const router = require('express').Router()
+const ctrl = require('../controllers/tasks.controller')
+const { protect } = require('../middleware/auth.middleware')
+router.use(protect)
+router.get('/', ctrl.getAllTasks)
+router.post('/', ctrl.createTask)
+router.get('/:id', ctrl.getTaskById)
+router.put('/:id', ctrl.updateTask)
+router.patch('/:id/status', ctrl.updateTaskStatus)
+router.delete('/:id', ctrl.deleteTask)
+router.post('/:id/comments', ctrl.addComment)
+router.delete('/:id/comments/:commentId', ctrl.deleteComment)
+module.exports = router
