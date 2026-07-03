@@ -1,6 +1,7 @@
 const pool = require('../config/db')
 const bcrypt = require('bcryptjs')
 const { successResponse, errorResponse } = require('../utils/response')
+const { sendInviteEmail } = require('../utils/sendEmail')
 
 exports.getAllUsers = async (req, res) => {
   try {
@@ -56,22 +57,19 @@ exports.inviteUser = async (req, res) => {
   'INSERT INTO users (name, email, role, status, invite_token) VALUES ($1, $2, $3, $4, $5)',
   [placeholderName, email, role || 'employee', 'invited', token]
 )
-    // await pool.query(
-    //   'INSERT INTO users (email, role, status, invite_token) VALUES ($1, $2, $3, $4)',
-    //   [email, role || 'employee', 'invited', token]
-    // )
-    // TODO: Send invite email with token
-    // return successResponse(res, { email, role }, 'Invite sent successfully.', 201)
-        const appUrl = process.env.FRONTEND_URL || 'http://localhost:3000'
+
+      const appUrl = process.env.FRONTEND_URL || 'http://localhost:3000'
     const inviteLink = `${appUrl}/auth/accept-invite?token=${token}`
  
-    // TODO: replace manual link with real email sending before production
+    await sendInviteEmail(email, inviteLink)
+
     return successResponse(
       res,
-      { email, role, inviteLink },
-      'Invite created. Share the link to let them join.',
+      { email, role },
+      'Invite email sent successfully.',
       201
     )
+
   } catch (err) { return errorResponse(res, err.message, 500) }
 }
 
