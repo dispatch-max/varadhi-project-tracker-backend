@@ -3,58 +3,198 @@ const { successResponse, errorResponse } = require('../utils/response')
 
 exports.getStats = async (req, res) => {
   try {
+    const isEmployee = req.user.role.toLowerCase() === 'employee'
+
+    let projectsQuery = `
+      SELECT
+        COUNT(*) AS total,
+        COUNT(CASE WHEN status='active' THEN 1 END) AS active
+      FROM projects
+    `
+
+    let tasksQuery = `
+      SELECT
+        COUNT(*) AS total,
+        COUNT(CASE WHEN status='completed' THEN 1 END) AS completed,
+        COUNT(CASE WHEN status='in_progress' THEN 1 END) AS in_progress
+      FROM tasks
+    `
+
+    let overdueQuery = `
+      SELECT COUNT(*) AS total
+      FROM tasks
+      WHERE due_date < NOW()
+      AND status != 'completed'
+    `
+
+    let projectParams = []
+    let taskParams = []
+    let overdueParams = []
+
+    // Employee dashboard → only assigned tasks
+    if (isEmployee) {
+
+      projectsQuery = `
+        SELECT
+          COUNT(DISTINCT p.id) AS total,
+          COUNT(DISTINCT CASE WHEN p.status='active' THEN p.id END) AS active
+        FROM projects p
+        JOIN tasks t ON t.project_id = p.id
+        WHERE t.assignee_id = $1
+      `
+
+      tasksQuery += `
+        WHERE assignee_id = $1
+      `
+
+      overdueQuery += `
+        AND assignee_id = $1
+      `
+
+      projectParams = [req.user.id]
+      taskParams = [req.user.id]
+      overdueParams = [req.user.id]
+    }
+
     const [projects, tasks, members, overdue] = await Promise.all([
-      pool.query("SELECT COUNT(*) AS total, COUNT(CASE WHEN status='active' THEN 1 END) AS active FROM projects"),
-      pool.query("SELECT COUNT(*) AS total, COUNT(CASE WHEN status='completed' THEN 1 END) AS completed, COUNT(CASE WHEN status='in_progress' THEN 1 END) AS in_progress FROM tasks"),
-      pool.query("SELECT COUNT(*) AS total FROM users WHERE status='active'"),
-      pool.query("SELECT COUNT(*) AS total FROM tasks WHERE due_date < NOW() AND status != 'completed'")
+      pool.query(projectsQuery, projectParams),
+      pool.query(tasksQuery, taskParams),
+      pool.query(
+        "SELECT COUNT(*) AS total FROM users WHERE status='active'"
+      ),
+      pool.query(overdueQuery, overdueParams)
     ])
+
     return successResponse(res, {
-      totalProjects: parseInt(projects.rows[0].total),
-      activeProjects: parseInt(projects.rows[0].active),
-      totalTasks: parseInt(tasks.rows[0].total),
-      completedTasks: parseInt(tasks.rows[0].completed),
-      inProgressTasks: parseInt(tasks.rows[0].in_progress),
-      overdueTasks: parseInt(overdue.rows[0].total),
-      teamMembers: parseInt(members.rows[0].total),
+      totalProjects: Number(projects.rows[0].total),
+      activeProjects: Number(projects.rows[0].active),
+      totalTasks: Number(tasks.rows[0].total),
+      completedTasks: Number(tasks.rows[0].completed),
+      inProgressTasks: Number(tasks.rows[0].in_progress),
+      overdueTasks: Number(overdue.rows[0].total),
+      teamMembers: Number(members.rows[0].total),
     })
-  } catch (err) { return errorResponse(res, err.message, 500) }
+
+  } catch (err) {
+    return errorResponse(res, err.message, 500)
+  }
 }
+
+
+
 
 exports.getActivity = async (req, res) => {
   try {
-    const result = await pool.query(`
-      SELECT t.id, t.title, t.status, t.updated_at AS created_at,
-        u.id AS user_id, u.name AS user_name
-      FROM tasks t JOIN users u ON t.reporter_id = u.id
-      ORDER BY t.updated_at DESC LIMIT 10
-    `)
+
+    const isEmployee = req.user.role.toLowerCase() === 'employee'
+
+    let query = `
+      SELECT
+        t.id,
+        t.title,
+        t.status,
+        t.updated_at AS created_at,
+        u.id AS user_id,
+        u.name AS user_name
+      FROM tasks t
+      JOIN users u
+        ON t.reporter_id = u.id
+    `
+
+    const params = []
+
+    // Employee -> only assigned tasks activity
+    if (isEmployee) {
+      query += `
+        WHERE t.assignee_id = $1
+      `
+      params.push(req.user.id)
+    }
+
+    query += `
+      ORDER BY t.updated_at DESC
+      LIMIT 10
+    `
+
+    const result = await pool.query(query, params)
+
     const activity = result.rows.map(r => ({
       id: r.id,
-      user: { id: r.user_id, name: r.user_name },
+      user: {
+        id: r.user_id,
+        name: r.user_name
+      },
       message: `updated task "${r.title}" to ${r.status.replace('_', ' ')}`,
       createdAt: r.created_at
     }))
+
     return successResponse(res, activity)
-  } catch (err) { return errorResponse(res, err.message, 500) }
+
+  } catch (err) {
+    return errorResponse(res, err.message, 500)
+  }
 }
 
-// exports.getBurndown = async (req, res) => {
-//   try {
-//     const { projectId } = req.params
-//     const project = await pool.query('SELECT start_date, end_date FROM projects WHERE id=$1', [projectId])
-//     if (!project.rows[0]) return errorResponse(res, 'Project not found.', 404)
-//     const totalTasks = await pool.query('SELECT COUNT(*) FROM tasks WHERE project_id=$1', [projectId])
-//     const total = parseInt(totalTasks.rows[0].count)
-//     // Generate simple burndown data
-//     const data = []
-//     for (let i = 1; i <= 14; i++) {
-//       const ideal = Math.max(0, total - Math.round((total / 14) * i))
-//       data.push({ day: `Day ${i}`, ideal, actual: i <= 7 ? ideal + Math.floor(Math.random() * 3) : null })
-//     }
-//     return successResponse(res, data)
-//   } catch (err) { return errorResponse(res, err.message, 500) }
-// }
+
+
+exports.getProjectProgress = async (req, res) => {
+  try {
+
+    const isEmployee = req.user.role.toLowerCase() === 'employee'
+
+    let query = `
+      SELECT
+        p.id,
+        p.name,
+        p.status,
+        u.name AS manager_name,
+        COUNT(t.id)::int AS "tasksCount",
+        COUNT(
+          CASE
+            WHEN t.status='completed'
+            THEN 1
+          END
+        )::int AS "completedTasksCount"
+      FROM projects p
+      LEFT JOIN tasks t
+        ON t.project_id = p.id
+      LEFT JOIN users u
+        ON p.manager_id = u.id
+    `
+
+    const params = []
+
+    if (isEmployee) {
+      query += `
+        WHERE p.id IN (
+          SELECT DISTINCT project_id
+          FROM tasks
+          WHERE assignee_id = $1
+        )
+      `
+      params.push(req.user.id)
+    }
+
+    query += `
+      GROUP BY
+        p.id,
+        p.name,
+        p.status,
+        u.name
+      ORDER BY
+        p.created_at DESC
+    `
+
+    const result = await pool.query(query, params)
+
+    return successResponse(res, result.rows)
+
+  } catch (err) {
+    return errorResponse(res, err.message, 500)
+  }
+}
+
+
 exports.getBurndown = async (req, res) => {
   try {
     const { projectId } = req.params
