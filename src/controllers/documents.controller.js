@@ -1,103 +1,4 @@
-// const pool = require('../config/db')
-// const { successResponse, errorResponse } = require('../utils/response')
-// const path = require('path')
-// const fs = require('fs')
 
-// exports.getAllDocuments = async (req, res) => {
-//   try {
-//     const { projectId, search } = req.query
-//     let query = `SELECT d.*, u.name AS uploader_name, p.name AS project_name
-//       FROM documents d LEFT JOIN users u ON d.uploaded_by = u.id
-//       LEFT JOIN projects p ON d.project_id = p.id WHERE 1=1`
-//     const params = []
-//     if (projectId) { params.push(projectId); query += ` AND d.project_id = $${params.length}` }
-//     if (search) { params.push(`%${search}%`); query += ` AND d.name ILIKE $${params.length}` }
-//     query += ' ORDER BY d.created_at DESC'
-//     const result = await pool.query(query, params)
-//     const docs = result.rows.map(d => ({
-//       id: d.id, name: d.name, originalName: d.original_name,
-//       fileType: d.file_type, fileSize: d.file_size, url: d.url,
-//       description: d.description, createdAt: d.created_at,
-//       project: d.project_id ? { id: d.project_id, name: d.project_name } : null,
-//       uploadedBy: { id: d.uploaded_by, name: d.uploader_name }
-//     }))
-//     return successResponse(res, docs)
-//   } catch (err) { return errorResponse(res, err.message, 500) }
-// }
-
-// exports.uploadDocument = async (req, res) => {
-//   try {
-//     if (!req.file) return errorResponse(res, 'No file uploaded.')
-//     const { description, projectId } = req.body
-//     const { originalname, mimetype, size, path: filePath } = req.file
-//     const ext = originalname.split('.').pop().toLowerCase()
-//     // In production: upload to Cloudinary here
-//     // For now: store local path
-//     // const url = `/uploads/${req.file.filename}`
-//     const result = await pool.query(
-//       'INSERT INTO documents (name, original_name, file_type, file_size, url, description, project_id, uploaded_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id',
-//       [originalname, originalname, ext, size, url, description, projectId || null, req.user.id]
-//     )
-//     const doc = await pool.query(
-//       `SELECT d.*, u.name AS uploader_name FROM documents d LEFT JOIN users u ON d.uploaded_by = u.id WHERE d.id = $1`,
-//       [result.rows[0].id]
-//     )
-//     return successResponse(res, doc.rows[0], 'File uploaded successfully.', 201)
-//   } catch (err) { return errorResponse(res, err.message, 500) }
-// }
-
-// // exports.deleteDocument = async (req, res) => {
-// //   try {
-// //     const result = await pool.query('DELETE FROM documents WHERE id=$1 RETURNING id', [req.params.id])
-// //     if (!result.rows[0]) return errorResponse(res, 'Document not found.', 404)
-// //     return successResponse(res, null, 'Document deleted.')
-// //   } catch (err) { return errorResponse(res, err.message, 500) }
-// // }
-
-
-// function resolveUploadPath(doc) {
-//   return path.join(__dirname, '..', '..', 'uploads', path.basename(doc.url))
-// }
-
-// exports.downloadDocument = async (req, res) => {
-//   try {
-//     const { id } = req.params
-//     const result = await pool.query('SELECT * FROM documents WHERE id = $1', [id])
-//     const doc = result.rows[0]
-//     if (!doc) return res.status(404).json({ message: 'Document not found' })
-
-//     const filePath = resolveUploadPath(doc)
-//     if (!fs.existsSync(filePath)) {
-//       return res.status(404).json({ message: 'File missing on server' })
-//     }
-//     // res.download streams the file and sets Content-Disposition with the original name
-//     res.download(filePath, doc.original_name || doc.name)
-//   } catch (err) {
-//     res.status(500).json({ message: 'Failed to download document' })
-//   }
-// }
-
-// exports.deleteDocument = async (req, res) => {
-//   try {
-//     const { id } = req.params
-//     const result = await pool.query(
-//       'DELETE FROM documents WHERE id = $1 RETURNING *',
-//       [id]
-//     )
-//     const doc = result.rows[0]
-//     if (!doc) return res.status(404).json({ message: 'Document not found' })
-
-//     // best-effort file cleanup — DB row is already gone, so a failed unlink
-//     // shouldn't fail the request; just log it
-//     fs.unlink(resolveUploadPath(doc), (err) => {
-//       if (err) console.warn('Could not remove file for document', id, err.message)
-//     })
-
-//     res.json({ success: true, data: { id } })
-//   } catch (err) {
-//     res.status(500).json({ message: 'Failed to delete document' })
-//   }
-// }
 
 const pool = require('../config/db')
 const cloudinary = require('../config/cloudinary')
@@ -137,18 +38,62 @@ function resourceTypeForExt(ext) {
 
 // ─── Controllers ───────────────────────────────────────────────────────────────
 
+// exports.getAllDocuments = async (req, res) => {
+//   try {
+//     const result = await pool.query(`
+//       SELECT d.id, d.name, d.original_name, d.file_type, d.file_size,
+//              d.url, d.description, d.created_at,
+//              p.id AS project_id, p.name AS project_name,
+//              u.id AS uploader_id, u.name AS uploader_name
+//       FROM documents d
+//       LEFT JOIN projects p ON d.project_id = p.id
+//       LEFT JOIN users u ON d.uploaded_by = u.id
+//       ORDER BY d.created_at DESC
+//     `)
+//     const documents = result.rows.map((d) => ({
+//       id: d.id,
+//       name: d.name,
+//       originalName: d.original_name,
+//       fileType: d.file_type,
+//       fileSize: parseInt(d.file_size) || 0,
+//       url: d.url,
+//       description: d.description,
+//       createdAt: d.created_at,
+//       project: d.project_id ? { id: d.project_id, name: d.project_name } : null,
+//       uploadedBy: d.uploader_id ? { id: d.uploader_id, name: d.uploader_name } : null,
+//     }))
+//     return successResponse(res, documents)
+//   } catch (err) {
+//     return errorResponse(res, err.message, 500)
+//   }
+// }
 exports.getAllDocuments = async (req, res) => {
   try {
+    const { folderId } = req.query
+ 
+    let where = ''
+    const params = []
+    if (folderId === 'root') {
+      where = 'WHERE d.folder_id IS NULL'
+    } else if (folderId) {
+      params.push(folderId)
+      where = `WHERE d.folder_id = $${params.length}`
+    }
+ 
     const result = await pool.query(`
       SELECT d.id, d.name, d.original_name, d.file_type, d.file_size,
-             d.url, d.description, d.created_at,
+             d.url, d.description, d.created_at, d.folder_id,
+             f.name AS folder_name,
              p.id AS project_id, p.name AS project_name,
              u.id AS uploader_id, u.name AS uploader_name
       FROM documents d
+      LEFT JOIN folders f ON d.folder_id = f.id
       LEFT JOIN projects p ON d.project_id = p.id
       LEFT JOIN users u ON d.uploaded_by = u.id
+      ${where}
       ORDER BY d.created_at DESC
-    `)
+    `, params)
+ 
     const documents = result.rows.map((d) => ({
       id: d.id,
       name: d.name,
@@ -158,6 +103,7 @@ exports.getAllDocuments = async (req, res) => {
       url: d.url,
       description: d.description,
       createdAt: d.created_at,
+      folder: d.folder_id ? { id: d.folder_id, name: d.folder_name } : null,
       project: d.project_id ? { id: d.project_id, name: d.project_name } : null,
       uploadedBy: d.uploader_id ? { id: d.uploader_id, name: d.uploader_name } : null,
     }))
@@ -167,22 +113,76 @@ exports.getAllDocuments = async (req, res) => {
   }
 }
 
+
+// exports.uploadDocument = async (req, res) => {
+//   try {
+//     if (!req.file) return errorResponse(res, 'No file uploaded.')
+
+//     const { description, projectId } = req.body
+//     const { originalname, size, buffer } = req.file
+//     const ext = originalname.split('.').pop()?.toLowerCase() || 'file'
+
+//     // Upload the in-memory buffer to Cloudinary
+//     const uploaded = await uploadBufferToCloudinary(buffer, originalname)
+    
+
+//     const result = await pool.query(
+//       `INSERT INTO documents
+//         (name, original_name, file_type, file_size, url, cloudinary_public_id, description, project_id, uploaded_by)
+//        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+//        RETURNING id`,
+//       [
+//         originalname,
+//         originalname,
+//         ext,
+//         size,
+//         uploaded.secure_url,
+//         uploaded.public_id,
+//         description || null,
+//         projectId || null,
+//         req.user.id,
+//       ]
+//     )
+
+//     return successResponse(
+//       res,
+//       {
+//         id: result.rows[0].id,
+//         url: uploaded.secure_url,
+//         name: originalname,
+//         fileType: ext,
+//         fileSize: size,
+//       },
+//       'Document uploaded successfully.',
+//       201
+//     )
+//   } catch (err) {
+//     return errorResponse(res, err.message, 500)
+//   }
+// }
+
 exports.uploadDocument = async (req, res) => {
   try {
     if (!req.file) return errorResponse(res, 'No file uploaded.')
-
-    const { description, projectId } = req.body
+ 
+    const { description, projectId, folderId } = req.body
     const { originalname, size, buffer } = req.file
     const ext = originalname.split('.').pop()?.toLowerCase() || 'file'
-
-    // Upload the in-memory buffer to Cloudinary
+ 
+    // Validate folderId if provided (avoid FK error surfacing as a 500)
+    let folder = null
+    if (folderId) {
+      const check = await pool.query('SELECT id FROM folders WHERE id = $1', [folderId])
+      if (!check.rows[0]) return errorResponse(res, 'Folder not found.', 400)
+      folder = folderId
+    }
+ 
     const uploaded = await uploadBufferToCloudinary(buffer, originalname)
-    
-
+ 
     const result = await pool.query(
       `INSERT INTO documents
-        (name, original_name, file_type, file_size, url, cloudinary_public_id, description, project_id, uploaded_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        (name, original_name, file_type, file_size, url, cloudinary_public_id, description, project_id, folder_id, uploaded_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
        RETURNING id`,
       [
         originalname,
@@ -193,10 +193,11 @@ exports.uploadDocument = async (req, res) => {
         uploaded.public_id,
         description || null,
         projectId || null,
+        folder,
         req.user.id,
       ]
     )
-
+ 
     return successResponse(
       res,
       {
@@ -209,6 +210,31 @@ exports.uploadDocument = async (req, res) => {
       'Document uploaded successfully.',
       201
     )
+  } catch (err) {
+    return errorResponse(res, err.message, 500)
+  }
+}
+
+exports.moveDocument = async (req, res) => {
+  try {
+    if (req.user.role.toLowerCase() === 'employee') {
+      return errorResponse(res, 'You are not authorized to move documents.', 403)
+    }
+ 
+    const { folderId } = req.body
+    let target = null
+    if (folderId) {
+      const check = await pool.query('SELECT id FROM folders WHERE id = $1', [folderId])
+      if (!check.rows[0]) return errorResponse(res, 'Folder not found.', 400)
+      target = folderId
+    }
+ 
+    const result = await pool.query(
+      'UPDATE documents SET folder_id = $1 WHERE id = $2 RETURNING id, folder_id',
+      [target, req.params.id]
+    )
+    if (!result.rows[0]) return errorResponse(res, 'Document not found.', 404)
+    return successResponse(res, result.rows[0], 'Document moved successfully.')
   } catch (err) {
     return errorResponse(res, err.message, 500)
   }

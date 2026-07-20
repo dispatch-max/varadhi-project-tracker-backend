@@ -43,8 +43,9 @@ app.use('/api/projects',      require('./routes/projects.routes'))
 app.use('/api/tasks',         require('./routes/tasks.routes'))
 app.use('/api/dashboard',     require('./routes/dashboard.routes'))
 app.use('/api/documents',     require('./routes/documents.routes'))
-app.use('/api/reports', require('./routes/reports.routes'))
+app.use('/api/reports',       require('./routes/reports.routes'))
 app.use('/api/notifications', require('./routes/notifications.routes'))
+app.use('/api/folders',       require('./routes/folders.routes'))
 
 // ─── Error Handlers ────────────────────────────────────────────────────────────
 const { errorHandler, notFound } = require('./middleware/error.middleware')
